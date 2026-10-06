@@ -4,7 +4,7 @@ Welcome to **Gatana**. Gatana is an MCP gateway that offers turn-key support for
 
 Teams connect their MCP servers, REST APIs (through OpenAPI) and serverless functions once. Every approved AI agent (Claude, ChatGPT, Codex, Cursor and others) then uses them under the user's own identity, with credentials, access control and audit logs handled in one place. Gatana Cloud runs in the EU; self-hosting uses the Helm chart below.
 
-🌐 **Website:** [gatana.ai](https://www.gatana.ai/) · 📖 **Docs:** [docs.gatana.ai](https://docs.gatana.ai/) · 💬 **Discord:** [Join us](https://discord.gg/6TvjvmSP)
+🌐 **Website:** [gatana.ai](https://www.gatana.ai/) · 📖 **Docs:** [docs.gatana.ai](https://docs.gatana.ai/) · 💬 **Discord:** [Join us](https://discord.gg/mrEkuSUBvg)
 
 ---
 
