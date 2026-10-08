@@ -8,18 +8,16 @@ Teams connect their MCP servers, REST APIs (through OpenAPI) and serverless func
 
 ---
 
-| Language | Repo | Description |
-|---|---|---|
-| TypeScript/JavaScript | https://github.com/gatana-ai/gatana-js | SDK & CLI |
-| Python | https://github.com/gatana-ai/gatana-python | SDK & LangChain Sandbox Backend |
 
----
+### Quick start
 
-### Quick Start
-
-**CLI**
 ```bash
 npm install -g gatana
+brew install gatana-ai/tap/gatana
+curl -fsSL https://github.com/gatana-ai/gatana/releases/latest/download/install.sh | sh
+```
+
+```bash
 gatana config login my-org
 gatana get servers
 ```
