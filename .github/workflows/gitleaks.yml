@@ -1,0 +1,118 @@
+# Reusable secret scan for the private gatana-ai repositories.
+#
+# Each private repository calls this from its own .github/workflows/secret-scan.yml,
+# so every repository runs the same pinned scanner. Public repositories do not
+# use it: they get GitHub's built-in secret scanning and push protection.
+#
+# The gitleaks CLI is MIT licensed and is run directly. The gitleaks-action
+# wrapper is not used because it needs a paid licence for organisation accounts.
+#
+# What a run does:
+#   1. Scans the complete git history of every branch. Secrets are redacted in
+#      every output, so a finding never copies the credential into logs.
+#   2. Writes a Markdown report to the job summary and uploads it, with the
+#      JSON report, as the artifact "gitleaks-report". The collector in
+#      gatana-src (packages/soc2/evidence/gitleaks/collect.sh) gathers these
+#      as SOC 2 evidence for CC4.1.1 and CC4.2.1.
+#   3. Fails when a finding is not covered by the calling repository's
+#      .gitleaks.toml. Every allowlist entry there must carry a reason.
+#
+# Version bumps: change GITLEAKS_VERSION and GITLEAKS_SHA256 together. The
+# checksum is the linux_x64 line of gitleaks_<version>_checksums.txt on the
+# release page. Actions are pinned to a commit; the comment names the tag.
+name: gitleaks
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+env:
+  GITLEAKS_VERSION: 8.30.1
+  GITLEAKS_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # every branch, full history
+
+      - name: Install gitleaks
+        run: |
+          curl -sSfL -o gitleaks.tar.gz \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          echo "${GITLEAKS_SHA256}  gitleaks.tar.gz" | sha256sum -c -
+          mkdir -p "$RUNNER_TEMP/gitleaks"
+          tar -xzf gitleaks.tar.gz -C "$RUNNER_TEMP/gitleaks" gitleaks
+          rm gitleaks.tar.gz
+          "$RUNNER_TEMP/gitleaks/gitleaks" version
+
+      - name: Scan full history
+        id: scan
+        run: |
+          # Exit code 2 means findings, 0 means clean, anything else is a scanner error.
+          set +e
+          "$RUNNER_TEMP/gitleaks/gitleaks" git . \
+            --redact --no-banner --exit-code 2 \
+            --report-format json --report-path "$RUNNER_TEMP/gitleaks-report.json" \
+            2> "$RUNNER_TEMP/gitleaks.log"
+          code=$?
+          set -e
+          cat "$RUNNER_TEMP/gitleaks.log"
+          case "$code" in
+            0|2) echo "leaks=$code" >> "$GITHUB_OUTPUT" ;;
+            *) echo "::error::gitleaks exited with $code"; exit "$code" ;;
+          esac
+
+      - name: Write report
+        run: |
+          report="$RUNNER_TEMP/gitleaks-report.json"
+          [ -s "$report" ] || echo '[]' > "$report"
+          commits=$(grep -oE '[0-9]+ commits scanned' "$RUNNER_TEMP/gitleaks.log" | head -1 || true)
+          count=$(jq length "$report")
+          if [ -f .gitleaks.toml ]; then allowlist=".gitleaks.toml in the repository"; else allowlist="gitleaks defaults only"; fi
+          {
+            echo "# Secret scan: ${GITHUB_REPOSITORY}"
+            echo
+            echo "| Field | Value |"
+            echo "| --- | --- |"
+            echo "| Repository | ${GITHUB_REPOSITORY} |"
+            echo "| Ref | ${GITHUB_REF_NAME} |"
+            echo "| Commit | ${GITHUB_SHA} |"
+            echo "| Scanned at | $(date -u +%Y-%m-%dT%H:%M:%SZ) |"
+            echo "| Trigger | ${GITHUB_EVENT_NAME} |"
+            echo "| Scanner | gitleaks v${GITLEAKS_VERSION} |"
+            echo "| Scope | ${commits:-unknown number of commits}, every branch |"
+            echo "| Allowlist | ${allowlist} |"
+            echo "| Findings | ${count} |"
+            echo "| Run | ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID} |"
+            echo
+            if [ "$count" -gt 0 ]; then
+              echo "## Findings (secrets redacted)"
+              echo
+              echo "| Rule | File | Line | Commit | Date |"
+              echo "| --- | --- | --- | --- | --- |"
+              jq -r '.[] | "| \(.RuleID) | \(.File) | \(.StartLine) | \(.Commit[0:8]) | \(.Date[0:10]) |"' "$report"
+            else
+              echo "No findings."
+            fi
+          } > "$RUNNER_TEMP/gitleaks-report.md"
+          cat "$RUNNER_TEMP/gitleaks-report.md" >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: gitleaks-report
+          path: |
+            ${{ runner.temp }}/gitleaks-report.md
+            ${{ runner.temp }}/gitleaks-report.json
+          retention-days: 90
+          if-no-files-found: error
+
+      - name: Fail on findings
+        if: steps.scan.outputs.leaks == '2'
+        run: |
+          echo "::error::gitleaks found secrets not covered by .gitleaks.toml. Rotate the credential, then see the job summary."
+          exit 1
